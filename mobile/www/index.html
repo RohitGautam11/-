@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src https:" />
+  <title>वार्तालाप</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0f0c14; color: #f5eff7; font-family: system-ui, sans-serif; padding: 24px; box-sizing: border-box; }
+    .card { width: min(420px, 100%); text-align: center; }
+    .mark { width: 88px; height: 88px; margin: 0 auto 18px; border-radius: 28px; display: grid; place-items: center; font-size: 52px; font-weight: 800; color: #fff; background: linear-gradient(135deg, #ff9a1f, #f0573f 55%, #c43c9b); }
+    h1 { margin: 0 0 6px; font-size: 30px; }
+    p { color: #b5a9bb; margin: 0 0 22px; line-height: 1.5; }
+    input { width: 100%; box-sizing: border-box; height: 50px; border-radius: 14px; border: 1px solid #3a3242; background: #1a1520; color: inherit; padding: 0 16px; font-size: 16px; }
+    button { margin-top: 12px; width: 100%; height: 50px; border: 0; border-radius: 999px; font-size: 16px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #ff9a1f, #f0573f 55%, #c43c9b); }
+    .err { color: #ff8a8a; min-height: 22px; margin-top: 10px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <form class="card" id="f">
+    <div class="mark">व</div>
+    <h1>वार्तालाप</h1>
+    <p>Enter your वार्तालाप server address. You only need to do this once.</p>
+    <input id="u" type="url" inputmode="url" placeholder="https://your-app.vercel.app" autocomplete="url" required />
+    <button>Continue</button>
+    <div class="err" id="e"></div>
+  </form>
+  <script>
+    const KEY = "vt:server";
+    const go = (base) => location.replace(base.replace(/\/$/, "") + "/app");
+    const saved = localStorage.getItem(KEY);
+    if (saved) go(saved);
+    document.getElementById("f").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const err = document.getElementById("e");
+      let value = document.getElementById("u").value.trim();
+      if (!/^https:\/\//.test(value)) value = "https://" + value.replace(/^\w+:\/\//, "");
+      err.textContent = "Checking…";
+      try {
+        const res = await fetch(value.replace(/\/$/, "") + "/api/health", { cache: "no-store" });
+        if (!res.ok) throw new Error();
+        localStorage.setItem(KEY, value);
+        go(value);
+      } catch {
+        err.textContent = "Couldn't reach a वार्तालाप server at that address.";
+      }
+    });
+  </script>
+</body>
+</html>

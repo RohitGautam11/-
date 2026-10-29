@@ -1,0 +1,60 @@
+name: iOS IPA (unsigned, for sideloading)
+
+# Builds an UNSIGNED .ipa on a GitHub macOS runner. Sign + install it on your own iPhone from
+# Windows with Sideloadly (free Apple ID) — see README → "iPhone test build".
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Server URL to open, e.g. https://vartalap.vercel.app (empty = ask on first launch)"
+        required: false
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      VARTALAP_URL: ${{ inputs.server_url || vars.VARTALAP_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - run: npm ci
+      - run: npx cap sync ios
+
+      - name: Build app (no code signing)
+        working-directory: mobile/ios/App
+        run: |
+          xcodebuild \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package .ipa
+        run: |
+          APP=$(find "$RUNNER_TEMP/dd/Build/Products/Release-iphoneos" -maxdepth 1 -name "*.app" | head -1)
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/vartalap-unsigned.ipa" Payload)
+          ls -lh "$GITHUB_WORKSPACE/vartalap-unsigned.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vartalap-ios-unsigned
+          path: vartalap-unsigned.ipa

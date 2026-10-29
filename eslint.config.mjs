@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Native shells and generated platform code.
+    "mobile/**",
+    ".data/**",
+    "public/sw.js",
   ]),
 ]);
 
