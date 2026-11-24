@@ -290,7 +290,7 @@ textarea.input { resize: vertical; }
   .shell.chat-open .tabbar { display: none; }
   .pane-wide { padding-top: var(--safe-top); }
   .tabbar {
-    display: grid; grid-template-columns: repeat(4, 1fr); background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+    display: grid; grid-template-columns: repeat(6, 1fr); background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
     backdrop-filter: blur(16px); border-top: 1px solid var(--line); padding: 6px 4px calc(6px + var(--safe-bottom));
   }
   .tabbar button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0; font-size: 11.5px; font-weight: 650; color: var(--text-3); }

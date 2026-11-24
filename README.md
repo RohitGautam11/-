@@ -8,6 +8,10 @@ It runs on the web, installs as an app on Android, iPhone and desktop, and the n
 | **Chats** | 1:1 and groups (up to 256), replies, reactions, edit (48 h), delete-for-everyone (erased server-side), pins, read receipts, polls, photos, files, voice notes |
 | **Unique** | ⏳ **Time capsules** (messages that unlock at a future date), 💸 **pay & split bills inside chats**, 🫥 disappearing messages (5 min → 90 days), 🛡️ **Privacy Shield** (blurs the app when you switch away), 🔑 safety numbers + key-change warnings, 🪔 **Vichaar** feed with moods |
 | **Wallet** | Double-entry ledger, atomic + idempotent transfers, payment requests and group splits, encrypted payment notes (test money until a gateway is connected) |
+| **Call centre** | One business number for the team (ring-all / round-robin), click-to-call with number masking, **power dialer**, SMS + WhatsApp inbox, CRM pipeline, follow-ups, social hub, analytics |
+| **Helpdesk** | Tickets with **SLA timers** per priority, rule-based **smart triage** (English/Hindi/Hinglish), auto-assignment by load, internal notes, live wallboard, CSAT. **Every missed call opens a callback ticket.** |
+| **Help centre** | Public self-service page at `/help/<workspace-id>` (off until an admin enables it): knowledge-base search, raise a ticket or request a callback, private tracking link, customer replies, star rating. No login. |
+| **Trust** | Workspace **audit log**, signed-in **device list with remote sign-out**, first-run **guided tour** (skippable, remembered per account, replay from You) |
 | **Platforms** | Responsive web app, installable PWA, Android APK and iOS project via Capacitor |
 
 ---
@@ -46,7 +50,7 @@ attachments: a fresh random AES-256 key per file, carried inside the encrypted m
 ```bash
 npm install
 npm run dev            # http://localhost:3000 — uses an embedded Postgres (PGlite) in .data/, zero setup
-npm run test:e2e       # 13 end-to-end API checks with real crypto (server must be running; BASE_URL=… to change)
+npm run test:e2e       # 22 end-to-end API checks with real crypto (server must be running; BASE_URL=… to change)
 ```
 
 Requires Node 20.19+ (22+ to run the test scripts).
@@ -122,6 +126,14 @@ When you outgrow polling, the next steps are:
 * Adopt a ratcheting protocol (e.g. MLS for groups).
 * Connect a licensed payment gateway (Razorpay/UPI) behind the existing ledger, then set `WALLET_TEST_MODE=off`.
 
+## Helpdesk & help centre
+
+* **Turn on the help centre:** Business → Helpdesk → *Help centre & SLA* → toggle *Help centre is live*. Share the link in your WhatsApp profile, Instagram bio, invoices and missed-call SMS.
+* **SLA targets** (minutes to first reply / to resolve) default to urgent 60/240, high 240/1440, normal 480/2880, low 1440/4320 and can be changed per workspace.
+* **Customer tracking links** carry a random 192-bit token. Only its SHA-256 hash is stored. Internal notes are never returned by the public API.
+* **Public endpoints** (`/api/public/help/*`) are rate-limited per IP and per workspace, and include a honeypot field against bots.
+* **Smart triage** is transparent keyword rules (`lib/helpdesk-shared.ts`), not a hosted AI model, so no customer text leaves your server. Agents can override anything it picks.
+
 ## Project layout
 
 ```
@@ -130,7 +142,9 @@ components/app/       the chat app UI (engine-driven, client side)
 components/site/      marketing-site widgets
 lib/crypto.ts         all end-to-end cryptography (WebCrypto only)
 lib/client/           sync engine, API client, key storage, selectors
-lib/server/           db + migrations, auth, validation, rate limits, wallet, conversations
+lib/server/           db + migrations, auth, validation, rate limits, wallet, conversations, helpdesk
+lib/helpdesk-shared.ts SLA policy, smart triage and knowledge-base ranking (shared by server and browser)
+components/help/      public help centre + ticket tracking pages (/help/...)
 mobile/               Capacitor Android + iOS shells, icons, build script
 scripts/              e2e test suite, database inspector
 ```

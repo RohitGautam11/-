@@ -10,6 +10,8 @@ export function selfView(user: SessionUser) {
     avatarHue: user.avatar_hue,
     publicKey: user.public_key,
     createdAt: user.created_at,
+    // The guided tour shows once per account, on every device, until it is finished or skipped.
+    tourDone: Boolean(user.tour_done_at),
   };
 }
 

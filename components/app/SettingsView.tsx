@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Download, KeyRound, LogOut, Moon, Palette, ShieldCheck, Sun, SunMoon, UserRound } from "lucide-react";
+import { Bell, Compass, Download, KeyRound, Laptop, LogOut, Moon, Palette, ShieldCheck, Sun, SunMoon, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { keyFingerprint } from "@/lib/crypto";
@@ -8,6 +8,8 @@ import { api } from "@/lib/client/api";
 import { changePassword, passwordStrength } from "@/lib/client/session";
 import type { Me } from "@/lib/client/types";
 import { useAction, useEngine, usePrefs, type Prefs } from "./context";
+import { ago } from "@/lib/client/selectors";
+import { TOUR_EVENT } from "./Tour";
 import { Avatar, Modal, Toggle } from "./ui";
 
 const ACCENTS: { id: Prefs["accent"]; label: string }[] = [
@@ -105,6 +107,14 @@ export function SettingsView({ onSignOut, onOpenProfile }: { onSignOut: () => vo
         <button className="btn btn-ghost" onClick={() => setPwOpen(true)}><KeyRound size={16} /> Change password</button>
       </section>
 
+      <Devices />
+
+      <section className="card-section">
+        <h3><Compass size={17} /> Guided tour</h3>
+        <p className="muted small">A one-minute walkthrough of chats, calls, the call centre, helpdesk, payments and privacy.</p>
+        <button className="btn btn-ghost" onClick={() => window.dispatchEvent(new Event(TOUR_EVENT))}><Compass size={16} /> Replay the tour</button>
+      </section>
+
       <section className="card-section">
         <h3><Download size={17} /> Get the app</h3>
         <p className="muted small">Install वार्तालाप on Android, iPhone or desktop from the download page.</p>
@@ -138,5 +148,39 @@ function PasswordDialog({ onClose }: { onClose: () => void }) {
       <label className="field"><span>New password</span><input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" /></label>
       <label className="field"><span>Confirm new password</span><input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" /></label>
     </Modal>
+  );
+}
+
+type Device = { id: string; device: string; createdAt: string; lastUsedAt: string; current: boolean };
+
+/** Every device signed in to this account, with remote sign-out for a lost or shared phone. */
+function Devices() {
+  const [run, busy] = useAction();
+  const [list, setList] = useState<Device[] | null>(null);
+  const load = () => api<{ sessions: Device[] }>("/api/me/sessions").then((r) => setList(r.sessions)).catch(() => setList([]));
+  useEffect(() => {
+    void load();
+  }, []);
+  const others = (list ?? []).filter((d) => !d.current);
+  return (
+    <section className="card-section">
+      <h3><Laptop size={17} /> Signed-in devices</h3>
+      <p className="muted small">Lost a phone or used a shared computer? Sign it out from here. It loses access at once and needs your password to get back in.</p>
+      {list?.map((d) => (
+        <div key={d.id} className="setting">
+          <span>{d.device}{d.current && <b className="pill">this device</b>}<small>Signed in {ago(d.createdAt)} · last active {ago(d.lastUsedAt)}</small></span>
+          {!d.current && <button className="btn btn-ghost sm" disabled={busy} onClick={() => void run(async () => {
+            await api("/api/me/sessions", { method: "DELETE", body: { id: d.id } });
+            await load();
+          }, "Device signed out")}>Sign out</button>}
+        </div>
+      ))}
+      {others.length > 1 && (
+        <button className="btn btn-ghost" disabled={busy} onClick={() => void run(async () => {
+          await api("/api/me/sessions", { method: "DELETE", body: { others: true } });
+          await load();
+        }, "Signed out everywhere else")}><LogOut size={16} /> Sign out all other devices</button>
+      )}
+    </section>
   );
 }

@@ -7,6 +7,10 @@ export async function cleanup() {
   );
   await query("DELETE FROM sessions WHERE expires_at < now()");
   await query("DELETE FROM rate_limits WHERE window_start < now() - interval '1 day'");
+  await query("DELETE FROM call_signals WHERE created_at < now() - interval '1 hour'");
+  await query(
+    "UPDATE call_sessions SET status = 'ended', ended_at = now() WHERE status = 'active' AND answered_at < now() - interval '12 hours'",
+  );
   // Public uploads that never made it into a post.
   await query(
     `DELETE FROM blobs b WHERE b.is_public AND b.created_at < now() - interval '1 day'

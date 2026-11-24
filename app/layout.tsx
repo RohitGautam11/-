@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Mukta, Plus_Jakarta_Sans } from "next/font/google";
 import { APP_NAME, TAGLINE } from "@/lib/brand";
 import "./globals.css";
+import "./suite.css";
 
 const sans = Plus_Jakarta_Sans({ variable: "--font-sans", subsets: ["latin"], display: "swap" });
 const deva = Mukta({ variable: "--font-deva", subsets: ["devanagari", "latin"], weight: ["400", "600", "800"], display: "swap" });

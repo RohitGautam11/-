@@ -1,8 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
-  Apple, ArrowRight, BarChart3, Download, EyeOff, Fingerprint, Hourglass, IndianRupee, KeyRound, Lock, MessageCircle,
-  Newspaper, Server, ShieldCheck, Smartphone, Timer, Users,
+  Apple, ArrowRight, BarChart3, Briefcase, Contact, Download, EyeOff, Fingerprint, Globe, Headset, History, Hourglass, Inbox, IndianRupee, KeyRound, Lock, Megaphone,
+  MessageCircle, Newspaper, PhoneCall, PiggyBank, Server, ShieldCheck, Smartphone, Timer, Users, Video, Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { InstallButton } from "@/components/site/InstallButton";
@@ -18,6 +18,20 @@ const FEATURES = [
   { icon: Fingerprint, title: "Safety numbers", text: "Verify a contact in person, and get warned if anyone's security key ever changes unexpectedly." },
   { icon: EyeOff, title: "Privacy Shield", text: "Blur the whole app the instant you switch away — ideal for crowded trains and screen sharing." },
   { icon: BarChart3, title: "Polls, pins & reactions", text: "Decide where to eat, pin the plan, react with ❤️ — all of it encrypted, all of it fast." },
+  { icon: Video, title: "HD voice & video calls", text: "Call anyone you chat with — free, peer-to-peer and encrypted. Screen sharing included on desktop." },
+];
+
+const BUSINESS = [
+  { icon: PhoneCall, title: "Click-to-call with number masking", text: "Your team calls customers from one business number. Customers never see agents' personal numbers, and agents never see customers'." },
+  { icon: Users, title: "One number, the whole team", text: "Inbound calls ring every available agent at once, or in turns. No more \"sorry, he's on another call\" — and no extra SIMs." },
+  { icon: Inbox, title: "SMS + WhatsApp inbox", text: "Every text to your business number lands in one shared inbox, with templates and an automatic reply to missed calls." },
+  { icon: Headset, title: "Helpdesk with SLA timers", text: "Every complaint, question and missed call becomes a ticket with an owner and a deadline. Smart triage spots urgent and upset customers, and the live wallboard shows what is about to slip." },
+  { icon: Globe, title: "Public help centre", text: "Customers search your answers, raise a ticket or book a callback, track it with a private link and rate the help, with no app or login. Every answer they find is a ticket you never get." },
+  { icon: Zap, title: "Power dialer", text: "Pick a stage and the dialer calls lead after lead from the business number. Agents just talk and log the outcome." },
+  { icon: History, title: "Audit log & device control", text: "See who added a teammate, changed a number or exported contacts. Sign out a lost phone remotely in one tap." },
+  { icon: Contact, title: "Calling CRM built in", text: "Leads, a drag-and-drop pipeline, follow-ups and a full timeline of every call, note and message — logged automatically." },
+  { icon: Megaphone, title: "Social media hub", text: "Keep all your Instagram, Facebook, X, LinkedIn, YouTube and WhatsApp handles in one place. Write once, schedule, publish everywhere." },
+  { icon: PiggyBank, title: "Lower phone bills", text: "Replace a SIM, plan and handset per employee with one shared line and pay-per-minute calling. The built-in calculator shows the saving." },
 ];
 
 function apk() {
@@ -37,6 +51,7 @@ export default function Home() {
         <Link href="/" className="site-brand"><span className="brand-mark">व</span><span>{APP_NAME}</span></Link>
         <nav>
           <a href="#features">Features</a>
+          <a href="#business">Business</a>
           <a href="#security">Security</a>
           <a href="#download">Download</a>
         </nav>
@@ -84,6 +99,24 @@ export default function Home() {
               <p>{text}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section id="business" className="section">
+        <span className="eyebrow"><Briefcase size={14} /> {APP_NAME} Business</span>
+        <h2>Turn one business number into a call centre</h2>
+        <p className="section-lead">Built for travel agencies, real-estate teams, clinics, coaching centres, shops and freelancers. Your whole team shares one number for calls, SMS and WhatsApp, works from the web or the phone, and every conversation is logged in the CRM automatically.</p>
+        <div className="feature-grid">
+          {BUSINESS.map(({ icon: Icon, title, text }) => (
+            <article key={title} className="feature">
+              <span className="feature-icon"><Icon size={22} /></span>
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </article>
+          ))}
+        </div>
+        <div className="hero-cta" style={{ justifyContent: "center", marginTop: 24 }}>
+          <Link href="/app" className="btn btn-primary lg"><Briefcase size={19} /> Try the Business demo</Link>
         </div>
       </section>
 

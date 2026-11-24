@@ -1,18 +1,23 @@
 "use client";
 
-import { MessageCircle, Newspaper, Settings, WalletCards, WifiOff } from "lucide-react";
+import { Briefcase, MessageCircle, Newspaper, Phone, Settings, WalletCards, WifiOff } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CallManager } from "@/lib/client/calls";
 import { Engine } from "@/lib/client/engine";
 import { previewText, titleOf } from "@/lib/client/selectors";
 import { logout, restore } from "@/lib/client/session";
 import type { Me } from "@/lib/client/types";
 import { AuthScreen } from "./AuthScreen";
+import { BusinessView } from "./business/BusinessView";
+import { CallContext, CallLayer } from "./CallLayer";
+import { CallsView } from "./CallsView";
 import { ChatList } from "./ChatList";
 import { ChatView } from "./ChatView";
 import { EngineContext, ToastProvider, useApplyTheme, useEngine, usePrefs, useToast } from "./context";
 import { FeedView } from "./FeedView";
 import { ProfileSheet } from "./ProfileSheet";
 import { SettingsView } from "./SettingsView";
+import { shouldShowTour, Tour, TOUR_EVENT } from "./Tour";
 import { Avatar, Spinner } from "./ui";
 import { WalletView } from "./WalletView";
 
@@ -21,7 +26,7 @@ type Boot =
   | { state: "auth"; reason?: string; username?: string }
   | { state: "ready"; user: Me; identity: CryptoKey };
 
-export type Tab = "chats" | "feed" | "wallet" | "settings";
+export type Tab = "chats" | "calls" | "business" | "feed" | "wallet" | "settings";
 
 export default function VartalapApp() {
   const [prefs] = usePrefs();
@@ -75,20 +80,29 @@ function Session({ user, identity, onSignedOut }: { user: Me; identity: CryptoKe
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [user.id],
   );
+  const calls = useMemo(() => new CallManager(user.id), [user.id]);
   useEffect(() => {
     engine.start();
-    return () => engine.stop();
-  }, [engine]);
+    calls.start();
+    return () => {
+      engine.stop();
+      calls.stop();
+    };
+  }, [engine, calls]);
 
   const signOut = useCallback(async () => {
     engine.stop();
+    calls.stop();
     await logout();
     onSignedOut();
-  }, [engine, onSignedOut]);
+  }, [engine, calls, onSignedOut]);
 
   return (
     <EngineContext.Provider value={engine}>
-      <Shell onSignOut={signOut} />
+      <CallContext.Provider value={calls}>
+        <Shell onSignOut={signOut} />
+        <CallLayer />
+      </CallContext.Provider>
     </EngineContext.Provider>
   );
 }
@@ -101,6 +115,17 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [profile, setProfile] = useState<string | null>(null);
   const [shielded, setShielded] = useState(false);
+  const [touring, setTouring] = useState(() => shouldShowTour(engine.me));
+
+  // You → "Guided tour" replays it.
+  useEffect(() => {
+    const replay = () => {
+      setOpenId(null);
+      setTouring(true);
+    };
+    window.addEventListener(TOUR_EVENT, replay);
+    return () => window.removeEventListener(TOUR_EVENT, replay);
+  }, []);
 
   const openChat = useCallback((id: string | null) => {
     setOpenId(id);
@@ -165,6 +190,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
 
   const tabs: { id: Tab; label: string; icon: typeof MessageCircle; badge?: number }[] = [
     { id: "chats", label: "Chats", icon: MessageCircle, badge: unread },
+    { id: "calls", label: "Calls", icon: Phone },
+    { id: "business", label: "Business", icon: Briefcase },
     { id: "feed", label: "Vichaar", icon: Newspaper },
     { id: "wallet", label: "Wallet", icon: WalletCards },
     { id: "settings", label: "You", icon: Settings },
@@ -176,7 +203,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         <button className="brand-mark" onClick={() => { setTab("chats"); }} aria-label="वार्तालाप">व</button>
         <div className="rail-tabs">
           {tabs.map(({ id, label, icon: Icon, badge }) => (
-            <button key={id} className={`rail-tab${tab === id ? " active" : ""}`} onClick={() => setTab(id)} aria-label={label} title={label}>
+            <button key={id} className={`rail-tab${tab === id ? " active" : ""}`} onClick={() => setTab(id)} aria-label={label} title={label} data-tour={`tab-${id}`}>
               <Icon size={22} strokeWidth={1.9} />
               {badge ? <span className="badge">{badge > 99 ? "99+" : badge}</span> : null}
             </button>
@@ -197,13 +224,15 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           </main>
         </>
       )}
+      {tab === "calls" && <main className="pane-wide"><CallsView /></main>}
+      {tab === "business" && <main className="pane-wide"><BusinessView /></main>}
       {tab === "feed" && <main className="pane-wide"><FeedView onOpenProfile={setProfile} /></main>}
       {tab === "wallet" && <main className="pane-wide"><WalletView onOpenChat={openChat} /></main>}
       {tab === "settings" && <main className="pane-wide"><SettingsView onSignOut={onSignOut} onOpenProfile={setProfile} /></main>}
 
       <nav className="tabbar" aria-label="Main">
         {tabs.map(({ id, label, icon: Icon, badge }) => (
-          <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>
+          <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)} data-tour={`tab-${id}`}>
             <span className="tabbar-icon"><Icon size={22} strokeWidth={1.9} />{badge ? <span className="badge">{badge > 99 ? "99+" : badge}</span> : null}</span>
             <span>{label}</span>
           </button>
@@ -212,6 +241,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
 
       {!engine.online && <div className="offline-pill"><WifiOff size={14} /> Reconnecting…</div>}
       {profile && <ProfileSheet username={profile} onClose={() => setProfile(null)} onMessage={(id) => { setProfile(null); openChat(id); }} />}
+      {touring && <Tour me={engine.me} onClose={() => setTouring(false)} />}
       {prefs.shield && shielded && <div className="shield-overlay"><span className="brand-mark big">व</span><p>Privacy Shield is on</p></div>}
     </div>
   );
@@ -230,6 +260,9 @@ function Welcome() {
         <span>🔐 End-to-end encrypted</span>
         <span>⏳ Time capsules</span>
         <span>💸 Pay & split in chat</span>
+        <span>📞 HD voice & video calls</span>
+        <span>💼 Call centre & CRM</span>
+        <span>🎧 Helpdesk with SLAs</span>
         <span>🫥 Disappearing messages</span>
       </div>
     </div>

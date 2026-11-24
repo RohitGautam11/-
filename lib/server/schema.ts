@@ -1,5 +1,5 @@
 // Bump SCHEMA_VERSION whenever SCHEMA_SQL changes. Every statement must be idempotent.
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_SQL: string[] = [
   // One global, monotonically increasing change counter drives incremental sync.
@@ -186,4 +186,247 @@ export const SCHEMA_SQL: string[] = [
     window_start timestamptz NOT NULL,
     hits int NOT NULL
   )`,
+
+  // ── v2: in-app audio/video calls (WebRTC). Media flows peer-to-peer (DTLS-SRTP);
+  // the server only relays the session descriptions and ICE candidates.
+  `CREATE TABLE IF NOT EXISTS call_sessions (
+    id uuid PRIMARY KEY,
+    conversation_id uuid REFERENCES conversations(id) ON DELETE SET NULL,
+    caller_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    callee_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    video boolean NOT NULL DEFAULT false,
+    status text NOT NULL DEFAULT 'ringing' CHECK (status IN ('ringing', 'active', 'ended', 'declined', 'missed', 'busy')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    answered_at timestamptz,
+    ended_at timestamptz
+  )`,
+  `CREATE INDEX IF NOT EXISTS call_sessions_callee_idx ON call_sessions(callee_id, status)`,
+  `CREATE INDEX IF NOT EXISTS call_sessions_caller_idx ON call_sessions(caller_id, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS call_signals (
+    id bigserial PRIMARY KEY,
+    call_id uuid NOT NULL REFERENCES call_sessions(id) ON DELETE CASCADE,
+    to_user uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type text NOT NULL,
+    payload text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS call_signals_to_idx ON call_signals(to_user, id)`,
+
+  // ── v2: Business Suite (calling CRM, shared numbers, social hub) ──────────────
+  `CREATE TABLE IF NOT EXISTS workspaces (
+    id uuid PRIMARY KEY,
+    name text NOT NULL,
+    industry text NOT NULL DEFAULT 'other',
+    owner_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    settings jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS workspace_members (
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role text NOT NULL DEFAULT 'agent' CHECK (role IN ('owner', 'admin', 'agent')),
+    phone text,
+    availability text NOT NULL DEFAULT 'available' CHECK (availability IN ('available', 'busy', 'away')),
+    joined_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (workspace_id, user_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS workspace_members_user_idx ON workspace_members(user_id)`,
+  // A business line is one public number shared by the whole team, on every channel it supports.
+  `CREATE TABLE IF NOT EXISTS business_lines (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    label text NOT NULL,
+    phone_number text NOT NULL,
+    provider text NOT NULL DEFAULT 'simulator' CHECK (provider IN ('simulator', 'twilio', 'exotel')),
+    channels text[] NOT NULL DEFAULT ARRAY['voice', 'sms']::text[],
+    routing text NOT NULL DEFAULT 'ring_all' CHECK (routing IN ('ring_all', 'round_robin', 'owner_first')),
+    missed_call_reply text,
+    record_calls boolean NOT NULL DEFAULT false,
+    active boolean NOT NULL DEFAULT true,
+    rr_cursor int NOT NULL DEFAULT 0,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS business_lines_ws_idx ON business_lines(workspace_id)`,
+  `CREATE INDEX IF NOT EXISTS business_lines_number_idx ON business_lines(phone_number)`,
+  `CREATE TABLE IF NOT EXISTS crm_contacts (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name text NOT NULL,
+    phone text NOT NULL,
+    email text NOT NULL DEFAULT '',
+    company text NOT NULL DEFAULT '',
+    tags text[] NOT NULL DEFAULT ARRAY[]::text[],
+    stage text NOT NULL DEFAULT 'new' CHECK (stage IN ('new', 'contacted', 'qualified', 'proposal', 'won', 'lost')),
+    source text NOT NULL DEFAULT 'manual',
+    value_paise bigint NOT NULL DEFAULT 0,
+    owner_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    last_contacted_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (workspace_id, phone)
+  )`,
+  `CREATE INDEX IF NOT EXISTS crm_contacts_ws_idx ON crm_contacts(workspace_id, updated_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS crm_calls (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    line_id uuid REFERENCES business_lines(id) ON DELETE SET NULL,
+    contact_id uuid REFERENCES crm_contacts(id) ON DELETE SET NULL,
+    agent_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    direction text NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+    status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'ringing', 'in-progress', 'completed', 'no-answer', 'busy', 'failed', 'missed', 'canceled')),
+    remote_number text NOT NULL,
+    provider text NOT NULL DEFAULT 'simulator',
+    provider_sid text,
+    disposition text,
+    notes text NOT NULL DEFAULT '',
+    recording_url text,
+    duration_sec int NOT NULL DEFAULT 0,
+    started_at timestamptz NOT NULL DEFAULT now(),
+    answered_at timestamptz,
+    ended_at timestamptz
+  )`,
+  `CREATE INDEX IF NOT EXISTS crm_calls_ws_idx ON crm_calls(workspace_id, started_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS crm_calls_contact_idx ON crm_calls(contact_id, started_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS crm_calls_sid_idx ON crm_calls(provider_sid) WHERE provider_sid IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS crm_messages (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    line_id uuid REFERENCES business_lines(id) ON DELETE SET NULL,
+    contact_id uuid REFERENCES crm_contacts(id) ON DELETE SET NULL,
+    agent_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    channel text NOT NULL CHECK (channel IN ('sms', 'whatsapp')),
+    direction text NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+    body text NOT NULL,
+    status text NOT NULL DEFAULT 'queued',
+    provider_sid text,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS crm_messages_contact_idx ON crm_messages(contact_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS crm_messages_ws_idx ON crm_messages(workspace_id, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS crm_activities (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    contact_id uuid NOT NULL REFERENCES crm_contacts(id) ON DELETE CASCADE,
+    actor_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    kind text NOT NULL,
+    body text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS crm_activities_contact_idx ON crm_activities(contact_id, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS crm_tasks (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    contact_id uuid REFERENCES crm_contacts(id) ON DELETE CASCADE,
+    assignee_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    title text NOT NULL,
+    due_at timestamptz NOT NULL,
+    done_at timestamptz,
+    created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS crm_tasks_ws_idx ON crm_tasks(workspace_id, done_at, due_at)`,
+  `CREATE TABLE IF NOT EXISTS crm_templates (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name text NOT NULL,
+    body text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS social_accounts (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    platform text NOT NULL,
+    handle text NOT NULL,
+    profile_url text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (workspace_id, platform, handle)
+  )`,
+  `CREATE TABLE IF NOT EXISTS social_posts (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    body text NOT NULL,
+    platforms text[] NOT NULL,
+    link text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'scheduled', 'sending', 'published', 'failed')),
+    scheduled_at timestamptz,
+    published_at timestamptz,
+    error text,
+    created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS social_posts_ws_idx ON social_posts(workspace_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS social_posts_due_idx ON social_posts(scheduled_at) WHERE status = 'scheduled'`,
+
+  // ── v3: guided tour, device sessions, helpdesk (tickets + SLA), knowledge base, help centre, audit log ──
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at timestamptz`,
+  `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_used_at timestamptz NOT NULL DEFAULT now()`,
+  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS ticket_seq int NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS support_tickets (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    number int NOT NULL,
+    kind text NOT NULL DEFAULT 'issue' CHECK (kind IN ('issue', 'callback', 'question')),
+    subject text NOT NULL,
+    description text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'pending', 'resolved', 'closed')),
+    priority text NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+    category text NOT NULL DEFAULT 'general',
+    sentiment text NOT NULL DEFAULT 'neutral' CHECK (sentiment IN ('positive', 'neutral', 'negative')),
+    channel text NOT NULL DEFAULT 'manual',
+    contact_id uuid REFERENCES crm_contacts(id) ON DELETE SET NULL,
+    assignee_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    requester_name text NOT NULL DEFAULT '',
+    requester_phone text,
+    requester_email text NOT NULL DEFAULT '',
+    preferred_time text NOT NULL DEFAULT '',
+    public_token_hash text UNIQUE,
+    first_response_due timestamptz NOT NULL,
+    resolve_due timestamptz NOT NULL,
+    first_response_at timestamptz,
+    resolved_at timestamptz,
+    csat int CHECK (csat BETWEEN 1 AND 5),
+    csat_comment text,
+    created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (workspace_id, number)
+  )`,
+  `CREATE INDEX IF NOT EXISTS tickets_ws_idx ON support_tickets(workspace_id, status, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS tickets_contact_idx ON support_tickets(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS tickets_assignee_idx ON support_tickets(assignee_id, status)`,
+  // kind: 'reply' (the customer sees it), 'note' (team only), 'event' (status/assignment), 'customer' (from the customer).
+  `CREATE TABLE IF NOT EXISTS ticket_events (
+    id uuid PRIMARY KEY,
+    ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+    actor_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    kind text NOT NULL CHECK (kind IN ('reply', 'note', 'event', 'customer')),
+    body text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS ticket_events_ticket_idx ON ticket_events(ticket_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS kb_articles (
+    id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    title text NOT NULL,
+    body text NOT NULL,
+    category text NOT NULL DEFAULT 'General',
+    published boolean NOT NULL DEFAULT true,
+    views int NOT NULL DEFAULT 0,
+    helpful int NOT NULL DEFAULT 0,
+    not_helpful int NOT NULL DEFAULT 0,
+    created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS kb_ws_idx ON kb_articles(workspace_id, published, updated_at DESC)`,
+  // Append-only record of sensitive admin actions: who changed what, and when.
+  `CREATE TABLE IF NOT EXISTS audit_log (
+    id bigserial PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    actor_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    action text NOT NULL,
+    detail text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS audit_ws_idx ON audit_log(workspace_id, id DESC)`,
 ];

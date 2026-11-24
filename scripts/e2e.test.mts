@@ -318,5 +318,200 @@ await step("posts, likes, comments, follows and feed", async () => {
   assert.equal(profile.data.followed, true);
 });
 
+// ── in-app calls (WebRTC signalling) ─────────────────────────────────────────
+
+await step("calls: ring, relay signals peer-to-peer, answer, busy, hang up", async () => {
+  const start = await expectOk(alice, "/api/calls", { body: { calleeId: bob.id, conversationId: direct.id, video: true } });
+  const callId = start.data.call.id;
+  assert.equal(start.data.call.status, "ringing");
+  // Bob's device sees the ring.
+  const ring = await expectOk(bob, "/api/calls/poll?after=0");
+  assert.ok(ring.data.calls.some((x: any) => x.id === callId && x.status === "ringing" && !x.outgoing));
+  // A third person can neither signal into the call nor call someone who's already ringing.
+  assert.equal((await call(carol, `/api/calls/${callId}/signal`, { body: { type: "offer", payload: "{}" } })).status, 403);
+  assert.equal((await call(carol, "/api/calls", { body: { calleeId: bob.id } })).status, 409);
+  // Only people in the chat can be called through it.
+  assert.equal((await call(carol, "/api/calls", { body: { calleeId: alice.id, conversationId: direct.id } })).status, 403);
+  await expectOk(alice, `/api/calls/${callId}/signal`, { body: { type: "offer", payload: JSON.stringify({ type: "offer", sdp: "v=0" }) } });
+  const sig = await expectOk(bob, `/api/calls/poll?after=${ring.data.cursor}`);
+  assert.ok(sig.data.signals.some((s: any) => s.callId === callId && s.type === "offer"));
+  assert.equal((await call(alice, `/api/calls/${callId}/answer`, { body: {} })).status, 403, "caller can't answer their own call");
+  await expectOk(bob, `/api/calls/${callId}/answer`, { body: {} });
+  await expectOk(bob, `/api/calls/${callId}/signal`, { body: { type: "answer", payload: JSON.stringify({ type: "answer", sdp: "v=0" }) } });
+  const end = await expectOk(alice, `/api/calls/${callId}/end`, { body: {} });
+  assert.equal(end.data.call.status, "ended");
+  const history = await expectOk(bob, "/api/calls");
+  assert.ok(history.data.calls.some((x: any) => x.id === callId && x.peer.id === alice.id));
+  const ice = await expectOk(bob, "/api/calls/ice");
+  assert.ok(ice.data.iceServers.length >= 1);
+  const s = await sync(bob);
+  assert.ok(s.messages.some((m: any) => m.kind === "system" && /Video call/.test(m.systemText ?? "")), "call summary appears in the chat");
+});
+
+// ── Business Suite ───────────────────────────────────────────────────────────
+
+let ws = "";
+await step("business: workspace with demo data, roles and number masking", async () => {
+  const created = await expectOk(alice, "/api/biz", { body: { name: `Yatra ${run}`, industry: "travel", demo: true } });
+  ws = created.data.id;
+  const ov = await expectOk(alice, `/api/biz/${ws}`);
+  assert.equal(ov.data.role, "owner");
+  assert.equal(ov.data.lines[0].provider, "simulator");
+  await expectOk(alice, `/api/biz/${ws}/members`, { body: { username: bob.username, role: "agent" } });
+  const asOwner = await expectOk(alice, `/api/biz/${ws}/contacts`);
+  const asAgent = await expectOk(bob, `/api/biz/${ws}/contacts`);
+  assert.equal(asOwner.data.contacts.length, 8);
+  assert.ok(asOwner.data.contacts.every((x: any) => /^\+91\d{10}$/.test(x.phone)), "owner sees full numbers");
+  assert.ok(asAgent.data.contacts.every((x: any) => x.phone.includes("•")), "agent sees masked numbers");
+  assert.equal((await call(carol, `/api/biz/${ws}`)).status, 404, "outsiders can't see the workspace");
+  assert.equal((await call(bob, `/api/biz/${ws}/export`)).status, 403, "agents can't export");
+  const csv = await fetch(`${BASE}/api/biz/${ws}/export`, { headers: { cookie: alice.cookie } });
+  assert.match(await csv.text(), /^name,phone/);
+});
+
+await step("business: click-to-call with masking, outcome logged on the lead's timeline", async () => {
+  const ov = await expectOk(bob, `/api/biz/${ws}`);
+  const lineId = ov.data.lines[0].id;
+  assert.equal((await call(bob, `/api/biz/${ws}/calls`, { body: { lineId, number: "+919999900000" } })).status, 403, "agents can't dial raw numbers");
+  const lead = (await expectOk(bob, `/api/biz/${ws}/contacts?q=ananya`)).data.contacts[0];
+  const placed = await expectOk(bob, `/api/biz/${ws}/calls`, { body: { lineId, contactId: lead.id } });
+  assert.ok(placed.data.call.remoteNumber.includes("•"), "the agent's call log is masked too");
+  const id = placed.data.call.id;
+  await expectOk(bob, `/api/biz/${ws}/calls/${id}`, { method: "PATCH", body: { status: "in-progress" } });
+  const done = await expectOk(bob, `/api/biz/${ws}/calls/${id}`, { method: "PATCH", body: { status: "completed", disposition: "Interested", notes: "Wants 5 nights" } });
+  assert.equal(done.data.call.status, "completed");
+  const detail = await expectOk(bob, `/api/biz/${ws}/contacts/${lead.id}`);
+  assert.ok(detail.data.calls.some((x: any) => x.id === id && x.disposition === "Interested"));
+  assert.ok(detail.data.activities.some((a: any) => /Interested/.test(a.body)));
+});
+
+await step("business: import, SMS/WhatsApp inbox with templates, follow-ups, analytics", async () => {
+  const imp = await expectOk(alice, `/api/biz/${ws}/contacts`, {
+    body: { contacts: [{ name: "Ravi Kumar", phone: "98765 11111", tags: ["Goa"] }, { name: "Ravi Kumar", phone: "+919876511111", company: "Kumar Tours" }, { name: "Bad", phone: "12" }] },
+  });
+  assert.deepEqual([imp.data.created, imp.data.updated, imp.data.errors.length], [1, 1, 1]);
+  const ravi = (await expectOk(alice, `/api/biz/${ws}/contacts?q=goa`)).data.contacts.find((x: any) => x.phone === "+919876511111");
+  assert.ok(ravi, "10-digit numbers become +91 and tags are searchable");
+  const ov = await expectOk(alice, `/api/biz/${ws}`);
+  await expectOk(alice, `/api/biz/${ws}/messages`, { body: { lineId: ov.data.lines[0].id, contactId: ravi.id, channel: "whatsapp", body: "Namaste {name}!" } });
+  await new Promise((r) => setTimeout(r, 4500));
+  const thread = await expectOk(alice, `/api/biz/${ws}/contacts/${ravi.id}`);
+  assert.equal(thread.data.messages[0].body, "Namaste Ravi!", "{name} is filled in");
+  assert.ok(thread.data.messages.some((m: any) => m.direction === "inbound"), "simulated customer reply arrives");
+  await expectOk(alice, `/api/biz/${ws}/tasks`, { body: { title: "Send Goa options", dueAt: new Date(Date.now() + 3600_000).toISOString(), contactId: ravi.id } });
+  const tasks = await expectOk(bob, `/api/biz/${ws}/tasks`);
+  assert.ok(tasks.data.tasks.some((t: any) => t.title === "Send Goa options"));
+  const stats = await expectOk(alice, `/api/biz/${ws}/analytics?days=7`);
+  assert.equal(stats.data.daily.length, 7);
+  assert.ok(stats.data.agents.find((a: any) => a.calls >= 1));
+});
+
+await step("business: social handles and multi-platform posts; carrier webhooks need a signature", async () => {
+  await expectOk(alice, `/api/biz/${ws}/social/accounts`, { body: { platform: "instagram", handle: "https://instagram.com/yatra.sathi/" } });
+  assert.equal((await call(bob, `/api/biz/${ws}/social/accounts`, { body: { platform: "x", handle: "x" } })).status, 403);
+  const tooLong = await call(alice, `/api/biz/${ws}/social/posts`, { body: { body: "x".repeat(300), platforms: ["x"] } });
+  assert.equal(tooLong.status, 400, "per-platform length limits are enforced");
+  const post = await expectOk(alice, `/api/biz/${ws}/social/posts`, { body: { body: "Monsoon offer!", platforms: ["instagram", "x"], publishNow: true } });
+  assert.ok(post.data.delivered === "manual" || post.data.delivered === "webhook");
+  const social = await expectOk(alice, `/api/biz/${ws}/social`);
+  assert.ok(social.data.accounts.some((a: any) => a.handle === "yatra.sathi"));
+  const forged = await fetch(`${BASE}/api/telephony/twilio/sms`, { method: "POST", body: "From=%2B911&To=%2B912&Body=hi", headers: { "content-type": "application/x-www-form-urlencoded" } });
+  assert.equal(forged.status, 403);
+});
+
+// ── Helpdesk, help centre, security ─────────────────────────────────────────
+
+await step("helpdesk: smart triage, SLA, auto-assign, masked requester, replies set first response", async () => {
+  const seeded = await expectOk(alice, `/api/biz/${ws}/tickets?view=open`);
+  assert.ok(seeded.data.tickets.length >= 3, "demo workspace comes with sample tickets");
+  const created = await expectOk(alice, `/api/biz/${ws}/tickets`, {
+    body: { subject: "Refund not received, charged twice!!!", description: "Worst experience, very frustrated", requesterPhone: "+919812300077", requesterName: "Meera" },
+  });
+  assert.equal(created.data.priority, "urgent", "upset customer + refund → urgent");
+  assert.equal(created.data.category, "billing");
+  const id = created.data.id;
+  const asAgent = await expectOk(bob, `/api/biz/${ws}/tickets/${id}`);
+  assert.ok(asAgent.data.ticket.requesterPhone.includes("•"), "agents see masked requester numbers");
+  assert.ok(new Date(asAgent.data.ticket.firstResponseDue).getTime() - Date.now() <= 61 * 60_000, "urgent SLA is 1 hour");
+  assert.ok(asAgent.data.suggestions.some((s: any) => /refund/i.test(s.title)), "knowledge base suggests the refund article");
+  assert.equal((await call(bob, `/api/biz/${ws}/tickets/${id}`, { method: "PATCH", body: { assigneeId: alice.id } })).status, 403, "agents can't assign to others");
+  await expectOk(bob, `/api/biz/${ws}/tickets/${id}/reply`, { body: { body: "Checking this now", internal: true } });
+  let d = await expectOk(alice, `/api/biz/${ws}/tickets/${id}`);
+  assert.equal(d.data.ticket.firstResponseAt, null, "an internal note is not a first response");
+  await expectOk(alice, `/api/biz/${ws}/tickets/${id}/reply`, { body: { body: "Refund started, ref R123" } });
+  d = await expectOk(alice, `/api/biz/${ws}/tickets/${id}`);
+  assert.ok(d.data.ticket.firstResponseAt, "a reply stops the first-response clock");
+  assert.equal(d.data.ticket.status, "pending");
+  const board = await expectOk(bob, `/api/biz/${ws}/helpdesk`);
+  assert.ok(board.data.counts.open + board.data.counts.pending >= 1);
+  assert.equal((await call(bob, `/api/biz/${ws}/tickets/${id}`, { method: "DELETE" })).status, 403);
+});
+
+await step("helpdesk: a missed call opens a callback ticket automatically", async () => {
+  const sim = await expectOk(alice, `/api/biz/${ws}/calls/simulate-inbound`, { body: {} });
+  const callbacks = await expectOk(alice, `/api/biz/${ws}/tickets?view=callbacks`);
+  assert.ok(callbacks.data.tickets.some((t: any) => t.kind === "callback" && t.contactName === sim.data.contactName));
+  assert.equal((await call(bob, `/api/biz/${ws}/calls/simulate-inbound`, { body: {} })).status, 403);
+});
+
+await step("help centre: off by default; customers search, raise, track, reply and rate without an account", async () => {
+  assert.equal((await call(null, `/api/public/help/${ws}`)).status, 404, "closed until an admin turns it on");
+  assert.equal((await call(bob, `/api/biz/${ws}`, { method: "PATCH", body: { helpCenter: true } })).status, 403);
+  await expectOk(alice, `/api/biz/${ws}`, { method: "PATCH", body: { helpCenter: true, helpIntro: "We reply within an hour" } });
+  const home = await expectOk(null, `/api/public/help/${ws}`);
+  assert.equal(home.data.workspace.intro, "We reply within an hour");
+  const found = await expectOk(null, `/api/public/help/${ws}?q=${encodeURIComponent("when will I get my refund")}`);
+  assert.match(found.data.articles[0].title, /refund/i, "search ranks the right article first");
+  const bot = await expectOk(null, `/api/public/help/${ws}/tickets`, { body: { name: "Bot", phone: "+919800000001", subject: "spam spam", website: "http://spam" } });
+  assert.equal(bot.data.token, "", "honeypot: bots get nothing");
+  assert.equal((await call(null, `/api/public/help/${ws}/tickets`, { body: { name: "No contact", subject: "Help me" } })).status, 400, "phone or email required");
+  const raised = await expectOk(null, `/api/public/help/${ws}/tickets`, {
+    body: { name: "Sunita", phone: "98123 00088", subject: "Booking date change", description: "Please move my trip to next week" },
+  });
+  const token = raised.data.token as string;
+  assert.ok(token.length >= 30);
+  assert.equal((await call(null, `/api/public/help/${ws}/tickets/${"x".repeat(32)}`)).status, 404, "unknown tokens reveal nothing");
+  const list = await expectOk(alice, `/api/biz/${ws}/tickets?q=${encodeURIComponent("booking date change")}`);
+  const internal = list.data.tickets[0];
+  assert.equal(internal.channel, "help centre");
+  await expectOk(alice, `/api/biz/${ws}/tickets/${internal.id}/reply`, { body: { body: "Team-only context", internal: true } });
+  await expectOk(alice, `/api/biz/${ws}/tickets/${internal.id}/reply`, { body: { body: "Done, moved to the 19th!", status: "resolved" } });
+  const tracked = await expectOk(null, `/api/public/help/${ws}/tickets/${token}`);
+  assert.equal(tracked.data.ticket.status, "resolved");
+  assert.ok(tracked.data.messages.some((m: any) => m.body === "Done, moved to the 19th!"));
+  assert.ok(!tracked.data.messages.some((m: any) => m.body === "Team-only context"), "internal notes never reach the customer");
+  await expectOk(null, `/api/public/help/${ws}/tickets/${token}/rate`, { body: { score: 5, comment: "Super quick" } });
+  assert.equal((await call(null, `/api/public/help/${ws}/tickets/${token}/rate`, { body: { score: 1 } })).status, 400, "one rating per ticket");
+  await expectOk(null, `/api/public/help/${ws}/tickets/${token}/reply`, { body: { body: "One more thing" } });
+  assert.equal((await expectOk(null, `/api/public/help/${ws}/tickets/${token}`)).data.ticket.status, "open", "a customer reply reopens it");
+  const board = await expectOk(alice, `/api/biz/${ws}/helpdesk`);
+  assert.ok(board.data.csat.count >= 1);
+});
+
+await step("security: audit log, own follow-ups only, device list and remote sign-out, tour remembered", async () => {
+  const log = await expectOk(alice, `/api/biz/${ws}/audit`);
+  for (const action of ["workspace.create", "member.add", "contacts.export", "settings.update"]) {
+    assert.ok(log.data.entries.some((e: any) => e.action === action), `audit log records ${action}`);
+  }
+  assert.equal((await call(bob, `/api/biz/${ws}/audit`)).status, 403);
+  const task = (await expectOk(alice, `/api/biz/${ws}/tasks`)).data.tasks.find((t: any) => t.assigneeId === alice.id && !t.doneAt);
+  assert.equal((await call(bob, `/api/biz/${ws}/tasks/${task.id}`, { method: "PATCH", body: { done: true } })).status, 403, "agents can't close a teammate's follow-up");
+
+  const second = await login(carol.username, carol.password);
+  assert.equal(second.status, 200);
+  const devices = await expectOk(carol, "/api/me/sessions");
+  assert.equal(devices.data.sessions.length, 2);
+  assert.ok(devices.data.sessions.some((s: any) => s.current));
+  const other = { ...carol, cookie: second.cookie! };
+  await expectOk(carol, "/api/me/sessions", { method: "DELETE", body: { others: true } });
+  assert.equal((await call(other, "/api/me")).data.user, null, "the other device is signed out at once");
+  assert.equal((await expectOk(carol, "/api/me/sessions")).data.sessions.length, 1);
+
+  assert.equal((await expectOk(carol, "/api/me")).data.user.tourDone, false, "new accounts see the tour");
+  await expectOk(carol, "/api/me", { method: "PATCH", body: { tourDone: true } });
+  const again = await login(carol.username, carol.password);
+  assert.equal(again.user.tourDone, true, "skipping once hides it on every device");
+});
+
 console.log(`\n${passed} checks passed`);
 

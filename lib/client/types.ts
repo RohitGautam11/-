@@ -6,6 +6,7 @@ export type Me = {
   avatarHue: number;
   publicKey: string;
   createdAt: string;
+  tourDone?: boolean;
 };
 
 export type PublicUser = {

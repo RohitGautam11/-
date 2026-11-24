@@ -17,6 +17,7 @@ export type SessionUser = {
   avatar_hue: number;
   public_key: string;
   created_at: string;
+  tour_done_at?: string | Date | null;
 };
 
 export function appSecret() {
@@ -83,8 +84,9 @@ export async function destroySession(req: NextRequest, res: NextResponse) {
 export async function currentUser(req: NextRequest): Promise<SessionUser | null> {
   const token = req.cookies.get(SESSION_COOKIE)?.value;
   if (!token) return null;
-  const row = await one<SessionUser & { last_seen_at: Date }>(
-    `SELECT u.id, u.username, u.display_name, u.bio, u.avatar_hue, u.public_key, u.created_at, u.last_seen_at
+  const row = await one<SessionUser & { last_seen_at: Date; session_used_at: Date }>(
+    `SELECT u.id, u.username, u.display_name, u.bio, u.avatar_hue, u.public_key, u.created_at, u.tour_done_at, u.last_seen_at,
+            s.last_used_at AS session_used_at
        FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = $1 AND s.expires_at > now()`,
     [sha256(token)],
@@ -92,6 +94,9 @@ export async function currentUser(req: NextRequest): Promise<SessionUser | null>
   if (!row) return null;
   if (Date.now() - new Date(row.last_seen_at).getTime() > 60_000) {
     void query("UPDATE users SET last_seen_at = now() WHERE id = $1", [row.id]).catch(() => undefined);
+  }
+  if (Date.now() - new Date(row.session_used_at).getTime() > 5 * 60_000) {
+    void query("UPDATE sessions SET last_used_at = now() WHERE token_hash = $1", [sha256(token)]).catch(() => undefined);
   }
   return row;
 }

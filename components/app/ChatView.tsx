@@ -1,13 +1,14 @@
 "use client";
 
-import { ArrowDown, ArrowLeft, Info, Lock, Pin, ShieldAlert, Timer } from "lucide-react";
+import { ArrowDown, ArrowLeft, Info, Lock, Phone, Pin, ShieldAlert, Timer, Video } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { lastSeen, peerOf, previewText, relativeDay, timeline, titleOf } from "@/lib/client/selectors";
 import type { Message } from "@/lib/client/types";
+import { useCalls } from "./CallLayer";
 import { ChatInfo } from "./ChatInfo";
 import { hueFor } from "./ChatList";
 import { Composer } from "./Composer";
-import { useEngine } from "./context";
+import { useEngine, useToast } from "./context";
 import { MessageItem } from "./MessageItem";
 import { Avatar } from "./ui";
 
@@ -15,6 +16,8 @@ type Props = { conversationId: string; onBack: () => void; onOpenProfile: (usern
 
 export function ChatView({ conversationId, onBack, onOpenProfile }: Props) {
   const engine = useEngine();
+  const calls = useCalls();
+  const toast = useToast();
   const conv = engine.conversations.get(conversationId)!;
   const me = engine.me.id;
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -71,6 +74,12 @@ export function ChatView({ conversationId, onBack, onOpenProfile }: Props) {
           </span>
         </button>
         <div className="chat-actions">
+          {peer && !conv.leftAt && !peer.leftAt && (
+            <>
+              <button className="icon-btn" onClick={() => void calls.startCall(peer, conv.id, false).catch((e: Error) => toast(e.message, "error"))} aria-label="Voice call" title="Voice call"><Phone size={19} /></button>
+              <button className="icon-btn" onClick={() => void calls.startCall(peer, conv.id, true).catch((e: Error) => toast(e.message, "error"))} aria-label="Video call" title="Video call"><Video size={20} /></button>
+            </>
+          )}
           {conv.disappearingSeconds ? <span className="pill"><Timer size={13} /> {short(conv.disappearingSeconds)}</span> : null}
           <button className="icon-btn" onClick={() => setInfo(true)} aria-label="Chat info" title="Chat info"><Info size={20} /></button>
         </div>

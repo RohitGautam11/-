@@ -44,11 +44,11 @@
     </dict>
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>वार्तालाप uses the microphone to record encrypted voice notes.</string>
+	<string>वार्तालाप uses the microphone for encrypted voice notes and calls.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>वार्तालाप lets you share photos, which are encrypted before upload.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>वार्तालाप lets you take photos to share in encrypted chats.</string>
+	<string>वार्तालाप uses the camera for video calls and to take photos for encrypted chats.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

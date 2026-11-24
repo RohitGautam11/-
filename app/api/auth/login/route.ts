@@ -18,7 +18,7 @@ export const POST = route(async (req) => {
   await rateLimit(`login-user:${input.username}`, 10, 300);
 
   const user = await one<SessionUser & { auth_hash: string; encrypted_private_key: string }>(
-    `SELECT id, username, display_name, bio, avatar_hue, public_key, created_at, auth_hash, encrypted_private_key
+    `SELECT id, username, display_name, bio, avatar_hue, public_key, created_at, tour_done_at, auth_hash, encrypted_private_key
        FROM users WHERE username = $1`,
     [input.username],
   );
