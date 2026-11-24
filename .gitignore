@@ -46,3 +46,6 @@ next-env.d.ts
 
 # android build output
 /mobile/android/app/build
+
+.vercel
+.env*

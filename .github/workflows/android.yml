@@ -19,7 +19,7 @@ jobs:
       run:
         working-directory: mobile
     env:
-      VARTALAP_URL: ${{ inputs.server_url || vars.VARTALAP_URL }}
+      VARTALAP_URL: ${{ inputs.server_url || vars.VARTALAP_URL || 'https://vartalap-seven.vercel.app' }}
       VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('1.0.{0}', github.run_number) }}
     steps:
